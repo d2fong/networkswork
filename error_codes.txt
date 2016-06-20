@@ -1,0 +1,5 @@
+####
+ERROR CODES
+####
+
+SERV_ALREADY_STARTED = 5
