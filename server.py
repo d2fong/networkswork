@@ -1,27 +1,34 @@
+import os
 import socket
+import struct
 
 # ERROR CODES
 SERVER_ALREADY_STARTED = 5
 
+# SERVER CONFIG
+DEFAULT_MAX_CONNECTIONS = 5
+DEFAULT_HOME_DIR = os.path.abspath('./home_server')
+MAX_FILENAME_LENGTH = 512
 
+# PROTOCOL MSG IDENTIFIERS
+MSG_LIST = "list"
+MSG_TCPCONN = "tcp"
+MSG_GET = "get"
+MSG_PUT = "put"
 
-
+# Helper Functions
 def error(code, msg):
 	print "[ERROR]: %s, %d"%(msg, code)
 
-def log(lvl, msg):
+def log(lvl, msg, data=None):
 	print "[%s]: %s"%(lvl, msg)
-
-DEFAULT_SERVER_PORT = 8899
-DEFAULT_MAX_CONNECTIONS = 5
-DEFAULT_HOME_DIR = './home_server'
 
 
 
 class Server:
 
 	def __init__(self, addr=None,
-	 port=DEFAULT_SERVER_PORT,
+	 port=None,
 	 homeDir=DEFAULT_HOME_DIR,
 	 maxConnections=DEFAULT_MAX_CONNECTIONS):
 		self.addr = addr
@@ -30,78 +37,156 @@ class Server:
 			"path": homeDir,
 			"fileList": []
 		}
-		self.socket = None
+		self.udpSocket = None
+		self.tcpSocket = None
 		self.maxConnections = maxConnections
 
-	# wonky things for storing the files
-	# given a home directory, for each file in the
-	# directory, add it to the file list
-	# 
-	def setup_homeDirAndFileList(self):
-		# for f in self.homeDir:
-			# self.fileList.append(f)
-		pass
+	# Set up a file list, this takes the all the files stored in the 
+	# server file directory, and adds them to the list that shows which files are 
+	# available to the sender
+	def setup_file_list(self):
+		base_path = self.homeDir['path']
+		files = [f for f in os.listdir(base_path) if os.path.isfile(os.path.join(base_path, f))]
+		self.homeDir['fileList'] = files
+		print files
+		log("INFO", "Set up file list, contents: ")
+		map(lambda x: log("INFO", "file entry: " + x), files)
 
 	# setup the socket stuff, connect etc..
 	def spinup(self):
-		if self.socket is not None:
+		if self.udpSocket is not None:
 			error(5, "The server has already been started")
 		else:
-			self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+			self.udpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 			if self.addr is None:
 				self.addr = socket.gethostname()
 
-			self.socket.bind((self.addr , self.port))
-			log("INFO", "addr: %s, port: %d"%(self.addr, self.port))
-			self.waitAndServe()
+			if self.port is None:
+				self.udpSocket.bind(('' , 0))
+				self.port = self.udpSocket.getsockname()[1]
+			else:
+				self.udpSocket.bind(('', self.port))
 
-	def waitAndServe(self):
+			log("INFO", "addr: %s, port: %d"%(self.addr, self.port))
+
+			self.wait_and_serve()
+
+
+	# wait for client negotiation requests, parse them, and respond
+	def wait_and_serve(self):
 		while True:
-			data, address = self.sock.recvfrom(4096)
+			data, address = self.udpSocket.recvfrom(4096)
+			text = data.decode('ascii')
 
 			log("INFO", "Received %s bytes from address %s"% (len(data), address))
-			log("INFO", "Message contents: %s", data)
+			log("INFO", "Message contents: %s"%text)
+
+			if text == MSG_LIST:
+				payload = '\n'.join(self.homeDir['fileList'])
+						
+				log("INFO", "sending filelist string \n%s"%(payload))
+				self.udpSocket.sendto(payload.encode('ascii'), address)
+			
+			if text == MSG_TCPCONN:
+				# create socket
+				self.tcpSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+				self.tcpSocket.bind(('', 0))
+
+				log("INFO", "tcp connection created on addr: %s, port %d"%
+					(socket.gethostname(), self.tcpSocket.getsockname()[1]))
+
+				# create address/port tuple and send it to the client
+				payload = socket.gethostname() + "\n" + str(self.tcpSocket.getsockname()[1])
+				self.udpSocket.sendto(payload.encode('ascii'), address)
+
+				# handle the tcp request
+				self.handle_tcp_request()
+
+	def handle_tcp_request(self):
+		# accept 1 client connectiona at a time
+		self.tcpSocket.listen(1)
+
+		# connect to a client and serve a single request
+		conn, addr = self.tcpSocket.accept()
+
+		# get the whole message from the client
+		msg = self.recv_client_msg(conn)
+		log("INFO", "got message %s"%msg)
+
+		msgType = msg[:3]
+
+		if msgType == MSG_GET:
+			fileName = msg[4:]
+			if fileName not in self.homeDir["fileList"]:
+				response = "error file not in filelist"
+				self.send(conn, response)
+			else:
+				fPath = self.homeDir["path"] + '/' + fileName
+				log("INFO", "opening file %s"%fPath)
+				fileContent = None
+				try:
+					f = open(fPath,"r")
+					fileContent = f.read()
+				except:
+					self.send(conn,"error could not open file")
+					return
+
+				self.send(conn, "ok")
+				self.send(conn, fileContent)
+
+		if msgType = MSG_PUT:
+			parsedMsg = msg.split('\n')
+			fileName = parsedMsg[0][4:]
+			fPath = self.homeDir["path"] + "/" + fileName
+			if fileName not in self.homeDir["fileList"]:
+				self.homeDir["fileList"].append(fileName)
+				try:
+					f = open(fPath, "w+")
+					f.write(parsedMsg[1])
+				except:
+					self.send(conn, "error could not create file")
+					return
+			else:
+				try:
+					f = open(fPath, "W")
+					f.write(parsedMsg[1])
+				except:
+					self.send(conn, "error could not open and write file")
+					return
+
+			
+			self.send(conn, "ok")
 
 
+	# custom recv/send functions
+	# Each message has it's size appended at the front of it
+	def send(self, sock, msg):
+		payload = struct.pack('>I', len(msg)) + msg
+		sock.sendall(payload)
 
+	def recv_client_msg(self, sock):
+		msgLen = self.recv_n_bytes(sock, 4)
 
-	def create_connection(self):
-		pass
+		if not msgLen:
+			return None
 
-	def end_connection(self):
-		pass
+		msgLenNum = struct.unpack('>I', msgLen)[0]
 
-	# receive commands from the client, see which one
-	# we need to process and then process it
-	def parse_command(self, command):
-		if command.split(' ')[0] == "get":
-			self.process_get(command)
-		else:
-			if command.split(' ')[0] == "put":
-				self.process_put(command)
+		log("INFO", "received message length %d"%msgLenNum)
 
-	def process_get(self, command):
-		pass
+		return self.recv_n_bytes(sock, msgLenNum)
 
-	def process_put(self, command):
-		pass
+	# receive n bytes
+	def recv_n_bytes(self, sock, n):
+		buf = str()
 
-	def receive_data(self):
-		pass
-
-	def validate_filename(self, fname):
-		pass
-
-
-	# send our response to the client
-
-	def send_response(self):
-		pass 
-
-	def send_file(self, fname):
-		pass
-
+		while len(buf) < n:
+			p = sock.recv(n - len(buf))
+			if not p:
+				return None
+			buf += p
+		return buf
 
 
 
@@ -117,7 +202,8 @@ def send_file(fname):
 
 
 def serverTest():
-	x = Server(port=8080, homeDir=" ")
+	x = Server(addr='localhost',port=8888)
+	x.setup_file_list()
 	x.spinup()
 
 serverTest()
