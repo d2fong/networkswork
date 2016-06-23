@@ -1,18 +1,16 @@
 import os
 import socket
 import struct
-
-# Client error codes
-
-TCP_CONN_MISSING = 4
-
+import sys
 
 UDP_IP = "localhost"
 UDP_PORT = 8888
 
+def log(lvl, msg, data=None):
+	print "[%s]: %s"%(lvl, msg)
 
-def error(code, msg):
-	print "ERROR: %d %s" (code, msg)
+def error(msg):
+	log("ERROR", msg)
 
 def recv_server_msg(socket):
 	msgLen = recv_n_bytes(socket, 4)
@@ -35,12 +33,15 @@ def recv_n_bytes(socket, n):
 		buf += p
 	return buf
 
-
-
 # Input: String1, String2 in argv
 # String1: Remote Filename
 # String2: Local Filename
 def main():
+	# Parse arguments
+	remoteFile = sys.argv[1]
+	localFile = sys.argv[2]
+
+	# Negotiation phase: Create UDP socket and establish a TCP connectino
 	sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 	tcpIP = None
@@ -49,86 +50,61 @@ def main():
 		sock.sendto("list", (UDP_IP, UDP_PORT))
 		data, addr = sock.recvfrom(1024)
 		text = data.decode('ascii')
-		print text
+		log("INFO", "received list response: %s"%text)
 
 		sock.sendto("tcp", (UDP_IP, UDP_PORT))
 		data, addr = sock.recvfrom(1024)
 		text = data.decode('ascii')
 		tcpIP = text.split('\n')[0]
 		tcpPort = int(text.split('\n')[1])
-		print text
+		log("INFO", "connected to tcp transaction addr: %s %d"%(tcpIP, tcpPort))
 
 	finally:
 		sock.close()
 
+	# Connect to the tcp socket on the server
 	tcpSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
 	if tcpIP is None or tcpPort is None:
-		error(4, "tcp port, or tcp addr not found")
+		error("tcp port, or tcp addr not found")
+		return -1
 	tcpSock.connect((tcpIP, tcpPort))
 
+	# Transaction phase: lookup remote file on server, and write it to local file
+	data = None
 	try:
-		message = "get f1.txt"
+		message = "get %s" % remoteFile
 		payload = struct.pack('>I', len(message)) + message
 		tcpSock.sendall(payload)
 
 		data = recv_server_msg(tcpSock)
-		print data
+		log("INFO", "received server response: %s" % data)
 
 		if data == "ok":
+			# receiveing file
+			remoteFileSize = int(recv_server_msg(tcpSock))
 			data = recv_server_msg(tcpSock)
-		
-		print data
 
+			if remoteFileSize != len(data):
+				error("Expected %d bytes, received %d"% (remoteFileSize, len(data)))
+				return -1
+		else:
+			error(data)
+			return -1
 	finally:
 		tcpSock.close()
 
+	# Write the data to the file content
+	try:
+		f = open(localFile, "w+")
+		f.write(data)
+	except:
+		error("Unable to open and write to local file")
+		return -1
+	finally:
+		f.close()
 
-	# # get args
-	# if len(argv) != 2:
-	# 	error(-1, "Expect 2 strings as args")
+	return 0
 
-	# # connect to server
-	# sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-	# sock.bind((UDP_IP, UDP_PORT))
-
-	# # send the list request
-
-	# sock.sendto("list", (UDP_IP, UDP_PORT))
-
-	# # get list response
-	# # may need to get more data
-	# data, addr = sock.recvfrom(1024)
-
-
-	# # send first request, get the remote filename 
-
-	# tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	# tcp_sock.connect((TCP_IP, TCP_PORT))
-	# tcp.send("get" + " " + argv[1] + " " + argv[2])
-	# # get server response
-
-	# data = s.recv(1024)
-
-	# # interpret the data and get an error code
-
-	# code = int(data[:4])
-
-	# # if ok, then get the local file contents and put them in local file
-
-	# if code == 0:
-	# 	f = os.open(argv[1])
-	# 	f.write(data)
-	# 	f.close()
-
-	# else:
-	# 	error(-1, "Did not receive ok from server")
-	# # if not, error
-
-	# # close local file, close socket
-
-	# sock.close()
-	# tcp_sock.close()
 
 main()
 

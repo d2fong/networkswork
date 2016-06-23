@@ -17,8 +17,8 @@ MSG_GET = "get"
 MSG_PUT = "put"
 
 # Helper Functions
-def error(code, msg):
-	print "[ERROR]: %s, %d"%(msg, code)
+def error(msg):
+	log("ERROR", msg)
 
 def log(lvl, msg, data=None):
 	print "[%s]: %s"%(lvl, msg)
@@ -55,7 +55,7 @@ class Server:
 	# setup the socket stuff, connect etc..
 	def spinup(self):
 		if self.udpSocket is not None:
-			error(5, "The server has already been started")
+			error("The server has already been started")
 		else:
 			self.udpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -125,17 +125,22 @@ class Server:
 				fPath = self.homeDir["path"] + '/' + fileName
 				log("INFO", "opening file %s"%fPath)
 				fileContent = None
+				expectedBytes = None
 				try:
 					f = open(fPath,"r")
 					fileContent = f.read()
+					expectedBytes = len(fileContent)
 				except:
 					self.send(conn,"error could not open file")
 					return
+				finally:
+					f.close()
 
 				self.send(conn, "ok")
+				self.send(conn, str(expectedBytes))
 				self.send(conn, fileContent)
 
-		if msgType = MSG_PUT:
+		if msgType == MSG_PUT:
 			parsedMsg = msg.split('\n')
 			fileName = parsedMsg[0][4:]
 			fPath = self.homeDir["path"] + "/" + fileName
@@ -147,6 +152,8 @@ class Server:
 				except:
 					self.send(conn, "error could not create file")
 					return
+				finally:
+					f.close()
 			else:
 				try:
 					f = open(fPath, "W")
@@ -154,10 +161,10 @@ class Server:
 				except:
 					self.send(conn, "error could not open and write file")
 					return
+				finally:
+					f.close()
 
-			
 			self.send(conn, "ok")
-
 
 	# custom recv/send functions
 	# Each message has it's size appended at the front of it
@@ -187,18 +194,6 @@ class Server:
 				return None
 			buf += p
 		return buf
-
-
-
-def create_file(fname):
-	pass
-
-
-def open_file(fname):
-	pass
-
-def send_file(fname):
-	pass
 
 
 def serverTest():
