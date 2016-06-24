@@ -1,3 +1,5 @@
+#!/bin/python
+
 import os
 import socket
 import struct
@@ -8,7 +10,6 @@ SERVER_ALREADY_STARTED = 5
 # SERVER CONFIG
 DEFAULT_MAX_CONNECTIONS = 5
 DEFAULT_HOME_DIR = os.path.abspath('./home_server')
-MAX_FILENAME_LENGTH = 512
 
 # PROTOCOL MSG IDENTIFIERS
 MSG_LIST = "list"
@@ -48,9 +49,8 @@ class Server:
 		base_path = self.homeDir['path']
 		files = [f for f in os.listdir(base_path) if os.path.isfile(os.path.join(base_path, f))]
 		self.homeDir['fileList'] = files
-		print files
-		log("INFO", "Set up file list, contents: ")
-		map(lambda x: log("INFO", "file entry: " + x), files)
+		# log("INFO", "Set up file list, contents: ")
+		# map(lambda x: log("INFO", "file entry: " + x), files)
 
 	# setup the socket stuff, connect etc..
 	def spinup(self):
@@ -130,11 +130,10 @@ class Server:
 					f = open(fPath,"r")
 					fileContent = f.read()
 					expectedBytes = len(fileContent)
+					# f.close()
 				except:
 					self.send(conn,"error could not open file")
 					return
-				finally:
-					f.close()
 
 				self.send(conn, "ok")
 				self.send(conn, str(expectedBytes))
@@ -149,20 +148,19 @@ class Server:
 				try:
 					f = open(fPath, "w+")
 					f.write(parsedMsg[1])
+					# f.close()
 				except:
 					self.send(conn, "error could not create file")
 					return
-				finally:
-					f.close()
 			else:
 				try:
-					f = open(fPath, "W")
+					f = open(fPath, "w")
 					f.write(parsedMsg[1])
-				except:
+					# f.close()
+				except Exception as e:
+					print e
 					self.send(conn, "error could not open and write file")
 					return
-				finally:
-					f.close()
 
 			self.send(conn, "ok")
 
@@ -197,7 +195,7 @@ class Server:
 
 
 def serverTest():
-	x = Server(addr='localhost',port=8888)
+	x = Server()
 	x.setup_file_list()
 	x.spinup()
 
