@@ -168,12 +168,10 @@ def get(ip, port, remoteFile, localFile):
 	try:
 		f = open(localFile, "w+")
 		f.write(data)
+		f.close()
 	except:
 		error("Unable to open and write to local file")
 		return -1
-	finally:
-		f.close()
-
 	return 0
 
 client()
